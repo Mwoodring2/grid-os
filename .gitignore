@@ -1,0 +1,27 @@
+# PlatformIO build tree and merged factory images
+.pio/
+.pioenvs/
+.piolibdeps/
+dist/
+
+# Caches and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.venv/
+venv/
+env/
+
+# Editor-local settings
+.vscode/
+.idea/
+.cursor/
+*.code-workspace
+
+# Logs and local generated artifacts
+*.log
+*.tmp
+*.bak
