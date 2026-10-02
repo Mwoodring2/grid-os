@@ -8,8 +8,9 @@
 #include "es3c28p_board.h"
 #include "touch_ft6336.h"
 #include "image_policy.h"
+#include "grid_boot.h"
 
-// GRID//OS v0.1.0-alpha. Serial console remains usable if touch/SD fails.
+// GRID//OS v0.2.0-alpha. Serial console remains usable if touch/SD fails.
 TFT_eSPI tft;
 TFT_eSprite liveRow(&tft);
 String cachedRows[5];
@@ -23,6 +24,8 @@ String status="SYSTEM READY",cwd="/",commandLine;
 bool commandOverflow=false;
 struct Entry { String name,path; bool folder; size_t size; };
 Entry entries[64]; int count=0;
+bool installedAvailable=false;
+String installedName;
 uint32_t lastRefresh=0,lastTouch=0;
 
 void message(const String& s) { status=s; Serial.println(s); dirty=true; }
@@ -38,8 +41,26 @@ void storageBegin() {
     sdOk=SD_MMC.begin("/sdcard",true,false);
     if(sdOk) SD_MMC.mkdir("/apps");
 }
+void refreshInstalled() {
+    installedAvailable=false;
+    const esp_partition_t* p=grid::payloadPartition();
+    if(!grid::layoutCompatible() || !p)return;
+    esp_app_desc_t desc={};
+    if(esp_ota_get_partition_description(p,&desc)!=ESP_OK)return;
+    char name[33]={};memcpy(name,desc.project_name,32);
+    installedName=String(name);
+    if(installedName.isEmpty())installedName="PAYLOAD";
+    installedAvailable=true; // Descriptor detected; boot selection verifies body.
+}
+int visibleCount() { return count+((page==1 && installedAvailable)?1:0); }
+void launchInstalled() {
+    if(!installedAvailable){message("No installed image detected");return;}
+    esp_err_t result=grid::selectPayload();
+    if(result!=ESP_OK){message("Launch rejected: "+String(esp_err_to_name(result)));return;}
+    message("BOOTING INSTALLED PAYLOAD");delay(500);ESP.restart();
+}
 void enumerate() {
-    count=0; offset=0; selected=-1; confirm=0;
+    count=0; offset=0; selected=-1; confirm=0;refreshInstalled();
     if(!sdOk) { message("SD OFFLINE: CFG > RETRY SD"); return; }
     String path=page==1?"/apps":cwd;
     fs::File dir=SD_MMC.open(path);
@@ -58,7 +79,7 @@ void enumerate() {
     message(truncated?"First 64 entries; narrow directory":"SD INDEX READY");
 }
 const esp_partition_t* payloadSlot() {
-    return esp_partition_find_first(ESP_PARTITION_TYPE_APP,ESP_PARTITION_SUBTYPE_APP_OTA_0,"ota_0");
+    return grid::layoutCompatible()?grid::payloadPartition():nullptr;
 }
 String validate(fs::File& f) {
     const esp_partition_t* p=payloadSlot();
@@ -80,6 +101,7 @@ void installSelected() {
     if(!f) {message("Cannot open firmware");return;}
     String error=validate(f);
     if(error.length()) {f.close();confirm=0;message(error);return;}
+    installedAvailable=false;
     esp_ota_handle_t handle=0;
     esp_err_t result=esp_ota_begin(payloadSlot(),f.size(),&handle);
     if(result!=ESP_OK) {f.close();confirm=0;message("OTA begin failed: "+String(esp_err_to_name(result)));return;}
@@ -98,13 +120,13 @@ void installSelected() {
     if(result!=ESP_OK) {esp_ota_abort(handle);confirm=0;message("Write failed; launcher retained");return;}
     result=esp_ota_end(handle);
     if(result!=ESP_OK) {confirm=0;message("Image verification failed; launcher retained");return;}
-    result=esp_ota_set_boot_partition(payloadSlot());
+    result=grid::selectPayload();
     if(result!=ESP_OK) {confirm=0;message("Boot selection failed; launcher retained");return;}
     message("VERIFIED: rebooting payload");delay(700);ESP.restart();
 }
 void draw() {
     // Full redraw only on navigation/action; live SYS values update their own area.
-    tft.fillScreen(BG);label("GRID//OS",8,5,accent);label("ES3C28P  R0.1",175,5,MUTED);
+    tft.fillScreen(BG);label("GRID//OS",8,5,accent);label("ES3C28P  R0.2",175,5,MUTED);
     tft.drawFastHLine(0,28,320,accent);
     const char* names[]={"SYS","APPS","FILES","NET","TERM","CFG"};
     for(int i=0;i<6;i++) {tft.drawRect(i*53,207,53,33,i==page?accent:MUTED);label(names[i],i*53+6,215,i==page?accent:MUTED);}
@@ -117,7 +139,13 @@ void draw() {
         label("FLASH "+String(ESP.getFlashChipSize()/1048576)+" MB",8,130);
         label("SD "+String(sdOk?"ONLINE":"OFFLINE")+"  UP "+String(millis()/1000)+"s",8,153);
     } else if(page==1 || page==2) {
-        if(confirm) {
+        if(selected==-2 && page==1) {
+            label("INSTALLED//PAYLOAD",8,36,accent);
+            label(clipped(installedName),8,60);
+            label("Launches from internal flash.",8,83,MUTED);
+            label("Return needs a compatible app.",8,106,WARN);
+            button("BACK",8,140,140);button("BOOT APP",160,140,152);
+        } else if(confirm) {
             label("INSTALL//CONFIRM",8,36,WARN);
             label("Replaces the payload slot.",8,60);
             label("Return requires app integration",8,82,WARN);
@@ -131,9 +159,16 @@ void draw() {
             button("BACK",8,140,140);button("INSTALL",160,140,152);
         } else {
             label(page==1?"GRID//APPLICATIONS":clipped(cwd),8,33,accent);
-            for(int r=0;r<3 && offset+r<count;r++) {
-                const Entry& e=entries[offset+r];tft.drawRect(6,55+r*30,308,28,MUTED);
-                label(clipped((e.folder?"[DIR] ":"")+e.name),12,60+r*30);
+            for(int r=0;r<3 && offset+r<visibleCount();r++) {
+                const int index=offset+r;
+                tft.drawRect(6,55+r*30,308,28,MUTED);
+                if(page==1 && installedAvailable && index==0)
+                    label(clipped("[FLASH] "+installedName),12,60+r*30,accent);
+                else {
+                    const int fileIndex=index-((page==1&&installedAvailable)?1:0);
+                    const Entry& e=entries[fileIndex];
+                    label(clipped((e.folder?"[DIR] ":"")+e.name),12,60+r*30);
+                }
             }
             button(page==1?"RESCAN":"UP",8,149,96);button("PREV",111,149,96);button("NEXT",214,149,98);
         }
@@ -163,10 +198,15 @@ void draw() {
 void touch(int x,int y) {
     if(y>=207) {page=x/53;if(page>5)page=5;selected=-1;confirm=0;if(page==1||page==2)enumerate();dirty=true;return;}
     if(page==1||page==2) {
+        if(selected==-2 && page==1) {
+            if(y>=140 && y<175){if(x<155){selected=-1;dirty=true;}else launchInstalled();}
+            return;
+        }
         if(confirm && y>=140 && y<175) {if(x<155){confirm=0;dirty=true;}else installSelected();return;}
         if(selected>=0 && page==1 && y>=140 && y<175){if(x<155)selected=-1;else confirm=1;dirty=true;return;}
         if(y>=55 && y<145 && selected<0) {
-            int i=offset+(y-55)/30;if(i>=count)return;
+            int i=offset+(y-55)/30;if(i>=visibleCount())return;
+            if(page==1 && installedAvailable){if(i==0){selected=-2;dirty=true;return;}i--;}
             if(page==1)selected=i;
             else if(entries[i].folder){cwd=entries[i].path;enumerate();}
             else message(clipped(entries[i].name)+" "+String(entries[i].size)+" B");
@@ -175,7 +215,7 @@ void touch(int x,int y) {
         if(y>=149&&y<179) {
             if(x<104){if(page==2){int slash=cwd.lastIndexOf('/');cwd=slash<=0?"/":cwd.substring(0,slash);}enumerate();}
             else if(x<207){offset-=3;if(offset<0)offset=0;}
-            else if(offset+3<count)offset+=3;
+            else if(offset+3<visibleCount())offset+=3;
             dirty=true;
         }
     } else if(page==5) {
@@ -186,9 +226,11 @@ void touch(int x,int y) {
 }
 void execute(String cmd) {
     cmd.trim();
-    if(cmd=="help") Serial.println("help, sysinfo, sd ls, app list, wifi status, wifi connect SSID|PASSWORD, brightness 10..100, theme cyan|green|amber, reboot, clear");
+    if(cmd=="help") Serial.println("help, sysinfo, sd ls, app list, app installed, app boot, wifi status, wifi connect SSID|PASSWORD, brightness 10..100, theme cyan|green|amber, reboot, clear");
     else if(cmd=="sysinfo") Serial.printf("GRID//OS ESP32-S3 heap=%u psram=%u flash=%u uptime=%lu\n",ESP.getFreeHeap(),ESP.getFreePsram(),ESP.getFlashChipSize(),(unsigned long)(millis()/1000));
     else if(cmd=="sd ls"||cmd=="app list") {int old=page;page=cmd=="app list"?1:2;enumerate();for(int i=0;i<count;i++)Serial.println(entries[i].path);page=old;selected=-1;dirty=true;}
+    else if(cmd=="app installed") {refreshInstalled();message(installedAvailable?"INSTALLED: "+installedName:"No installed image detected");}
+    else if(cmd=="app boot") {refreshInstalled();launchInstalled();}
     else if(cmd=="wifi status") Serial.println(WiFi.status()==WL_CONNECTED?WiFi.localIP().toString():"Disconnected");
     else if(cmd.startsWith("wifi connect ")) {String args=cmd.substring(13);int split=args.indexOf('|');if(split<1){message("Use SSID|PASSWORD");return;}WiFi.mode(WIFI_STA);WiFi.begin(args.substring(0,split).c_str(),args.substring(split+1).c_str());message("WiFi connecting...");}
     else if(cmd.startsWith("brightness ")) {String value=cmd.substring(11);bool numeric=value.length()>0;for(size_t i=0;i<value.length();i++)if(value[i]<'0'||value[i]>'9')numeric=false;int v=value.toInt();if(!numeric||v<10||v>100){message("Brightness range: 10..100");return;}brightness=v;analogWrite(GoblinBoard::LCD_BL,v*255/100);prefs.putInt("brightness",v);dirty=true;}
@@ -201,7 +243,7 @@ void setup() {
     Serial.begin(115200);prefs.begin("grid-os",false);
     brightness=constrain(prefs.getInt("brightness",80),10,100);accent=prefs.getUShort("accent",0x07ff);
     pinMode(GoblinBoard::LCD_BL,OUTPUT);analogWrite(GoblinBoard::LCD_BL,brightness*255/100);
-    tft.init();tft.setRotation(1);liveRow.setColorDepth(16);rowBufferOk=liveRow.createSprite(320,23)!=nullptr;touchOk=goblinTouchBegin();storageBegin();
+    tft.init();tft.setRotation(1);liveRow.setColorDepth(16);rowBufferOk=liveRow.createSprite(320,23)!=nullptr;touchOk=goblinTouchBegin();storageBegin();refreshInstalled();
     message(touchOk?"SYSTEM READY":"TOUCH OFFLINE: USB CONSOLE READY");draw();
 }
 void loop() {

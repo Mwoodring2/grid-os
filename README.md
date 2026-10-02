@@ -1,5 +1,14 @@
-# GRID//OS v0.1.0-alpha
+# GRID//OS v0.2.0-alpha
 Cyberpunk firmware launcher foundation for **Hosyond ES3C28P 2.8-inch ESP32-S3 N16R8**. Landscape 320×240, ILI9341V, FT6336G, 1-bit SD_MMC. Separate project from ESP-Goblin. GPL-3.0-or-later.
+
+## Phase 2: cooperative switching
+The APPS list now includes `[FLASH]` when an installed image descriptor is detected. Tap it and BOOT APP to reopen the payload without rewriting flash. This works with SD removed. Complete image validation occurs when selecting the boot target; descriptor detection alone is not validation.
+
+Build output `dist/grid-return-test.bin` is an application-only test payload. Copy it into `/apps` on SD, install it through GRID//OS, then tap RETURN TO GRID//OS. The test app also accepts USB command `return`, or a two-second BOOT hold **while the app is already running**. These are cooperative app features, not universal bootloader recovery.
+
+Return and launch require the exact shared partition layout and report selection/verification failures without rebooting. Returning does not erase NVS or rewrite the launcher. Hold neither BOOT nor RESET during the in-app return test.
+
+USB commands `app installed` and `app boot` inspect/launch the payload. See `docs/PHASE2_ACCEPTANCE.md` for the test sequence.
 
 ## Implemented
 - SYS: real CPU frequency, heap, PSRAM, flash, uptime and SD state.
@@ -15,10 +24,12 @@ Cyberpunk firmware launcher foundation for **Hosyond ES3C28P 2.8-inch ESP32-S3 N
 Install Python and run from this folder:
 ```
 py -m pip install platformio
-py -m platformio run -e grid_es3c28p
+py -m platformio run -e grid_es3c28p -e grid_return_test
+py scripts/verify_release.py
+py scripts/run_host_tests.py
 ```
 Outputs after a successful build:
-- `dist/GRID-OS-ES3C28P-v0.1.0-alpha.bin`: merged factory image, USB flash at **0x0000**.
+- `dist/GRID-OS-ES3C28P-v0.2.0-alpha.bin`: merged factory image, USB flash at **0x0000**.
 - `dist/GRID-OS-application.bin`: application image only. Not the initial-install image.
 
 **Use the merged image at 0x0000 for initial flashing. Do not use PlatformIO `upload`: its default app offset follows ota_0 rather than our factory launcher.**
@@ -33,7 +44,7 @@ This alpha preserves the launcher at 0x10000 in a 3 MiB factory partition and in
 
 **Universal hardware return is NOT implemented.** With an unmodified payload, reboot continues booting that payload. Holding BOOT during reset enters the ESP32-S3 ROM downloader; it does not open GRID//OS. To return, use USB to flash the merged GRID//OS image again (or an advanced OTA-data reset procedure). Install confirmation states this limitation.
 
-A payload adapted to this partition layout can include `include/grid_return.h` and call `gridReturnToLauncher()` from its menu. It must not erase/replace the partition table or factory region. Rebuilding payloads against `partitions.csv` is recommended. Sharing the NVS partition may affect app settings. Apps expecting their own storage partitions, OTA scheme or flash offsets need adaptation even when their chip header passes.
+A payload adapted to this partition layout can copy **both** `include/grid_return.h` and `include/grid_boot.h` into its include folder, then include `grid_return.h` and call `gridReturnToLauncher()` from its menu. It must not erase/replace the partition table or factory region. Rebuilding payloads against `partitions.csv` is recommended. Sharing the NVS partition may affect app settings. Apps expecting their own storage partitions, OTA scheme or flash offsets need adaptation even when their chip header passes.
 
 A custom bootloader with a dedicated recovery input is the next required step for M5Launcher-like universal return. No such bootloader or hardware acceptance is claimed here. Image integrity checks do not prove board/pin compatibility or protect against a payload that deliberately writes arbitrary flash.
 

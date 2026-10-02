@@ -3,7 +3,7 @@ from pathlib import Path
 import hashlib
 import struct
 root = Path(__file__).resolve().parents[1]
-merged = root / 'dist/GRID-OS-ES3C28P-v0.1.0-alpha.bin'
+merged = root / 'dist/GRID-OS-ES3C28P-v0.2.0-alpha.bin'
 app = root / '.pio/build/grid_es3c28p/firmware.bin'
 data = merged.read_bytes()
 firmware = app.read_bytes()
@@ -32,5 +32,13 @@ for name,kind,sub,offset,size in entries:
 for first,second in zip(entries,entries[1:]):
     require(first[3]+first[4]<=second[3], 'Partitions overlap')
 digest=hashlib.sha256(data).hexdigest()
-(merged.parent/'SHA256SUMS.txt').write_text(digest+'  '+merged.name+'\n')
+sums = digest+'  '+merged.name+'\n'
+test_image = merged.parent/'grid-return-test.bin'
+if test_image.exists():
+    test_data = test_image.read_bytes()
+    require(len(test_data) >= 288 and len(test_data) <= 0x600000, 'Wrong test payload size')
+    require(test_data[0] == 0xe9 and test_data[12:14] == b'\x09\x00', 'Wrong test payload chip')
+    require(test_data[32:36] == b'\x32\x54\xcd\xab', 'Test payload is not an application image')
+    sums += hashlib.sha256(test_data).hexdigest()+'  '+test_image.name+'\n'
+(merged.parent/'SHA256SUMS.txt').write_text(sums)
 print('Release layout: PASS; '+str(len(data))+' bytes; SHA256 '+digest)

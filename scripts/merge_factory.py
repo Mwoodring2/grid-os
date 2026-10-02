@@ -9,7 +9,7 @@ def merge(source, target, env):
     build = Path(environment.subst("$BUILD_DIR"))
     tool = Path(environment.PioPlatform().get_package_dir("tool-esptoolpy")) / "esptool.py"
     command = [environment.subst("$PYTHONEXE"), str(tool), "--chip", "esp32s3", "merge_bin",
-               "-o", str(output / "GRID-OS-ES3C28P-v0.1.0-alpha.bin"),
+               "-o", str(output / "GRID-OS-ES3C28P-v0.2.0-alpha.bin"),
                "--flash_mode", "dio", "--flash_freq", "80m", "--flash_size", "16MB"]
     for address, filename in environment.get("FLASH_EXTRA_IMAGES", []):
         # Arduino boot_app0 initializes ota_0, which would bypass our factory
