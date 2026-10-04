@@ -10,7 +10,7 @@ if not compiler:
     print('Host tests unavailable: use g++ or an MSVC Developer PowerShell.')
     sys.exit(2)
 with tempfile.TemporaryDirectory(prefix='grid-host-tests-') as temp:
-    for suite in ('image_policy_test', 'boot_manager_test'):
+    for suite in ('image_policy_test', 'boot_manager_test', 'installed_app_test', 'grid_effects_test'):
         binary = Path(temp) / (suite + ('.exe' if sys.platform == 'win32' else ''))
         includes = [root/'tests/stubs', root/'include']
         source = root/'tests'/f'{suite}.cpp'

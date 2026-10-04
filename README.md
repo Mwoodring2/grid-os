@@ -2,7 +2,7 @@
 Cyberpunk firmware launcher foundation for **Hosyond ES3C28P 2.8-inch ESP32-S3 N16R8**. Landscape 320×240, ILI9341V, FT6336G, 1-bit SD_MMC. Separate project from ESP-Goblin. GPL-3.0-or-later.
 
 ## Phase 2: cooperative switching
-The APPS list now includes `[FLASH]` when an installed image descriptor is detected. Tap it and BOOT APP to reopen the payload without rewriting flash. This works with SD removed. Complete image validation occurs when selecting the boot target; descriptor detection alone is not validation.
+The APPS list now includes `[FLASH]` when the payload slot contains an application image. Discovery reads that image directly, including after a return to the launcher and with the SD card removed. It does not use an NVS installed flag or the current boot selection. Tap `[FLASH]` and BOOT APP to reopen the payload; that action selects the boot partition and does not rewrite the image. Returning clears only the OTA boot record and leaves the payload bytes in place. Serial output names the running and selected partitions, the factory and payload geometry, the descriptor result, and the reason a payload was rejected. Complete image validation occurs when selecting the payload boot target.
 
 Build output `dist/grid-return-test.bin` is an application-only test payload. Copy it into `/apps` on SD, install it through GRID//OS, then tap RETURN TO GRID//OS. The test app also accepts USB command `return`, or a two-second BOOT hold **while the app is already running**. These are cooperative app features, not universal bootloader recovery.
 
